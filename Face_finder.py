@@ -1,72 +1,106 @@
 import os
 import shutil
 import face_recognition
-from tkinter import filedialog, Tk, Button, Label
+from PIL import Image
+from tkinter import Tk, filedialog
 
-def select_reference_image():
-    global reference_image_path
-    reference_image_path = filedialog.askopenfilename(title="Select Reference Image")
-    label_ref.config(text=f"Reference Image:\n{reference_image_path}")
+def find_similar_faces(reference_image_path, folder_path, tolerance=0.6):
+    """
+    Finds images in the given folder containing faces similar to the
+    face in the reference image.
 
-def select_target_folder():
-    global target_folder
-    target_folder = filedialog.askdirectory(title="Select Folder to Search")
-    label_target.config(text=f"Target Folder:\n{target_folder}")
+    Args:
+        reference_image_path (str): Path to the reference image.
+        folder_path (str): Path to the folder to search for similar faces.
+        tolerance (float): Tolerance for face comparison (lower is stricter).
 
-def find_and_move_matches():
-    if not reference_image_path or not target_folder:
-        result_label.config(text="Please select both reference image and target folder!")
-        return
-
-    # Load the reference image and encode face
+    Returns:
+        list: A list of file paths of images containing similar faces.
+    """
     try:
         reference_image = face_recognition.load_image_file(reference_image_path)
-        reference_encoding = face_recognition.face_encodings(reference_image)[0]
-    except:
-        result_label.config(text="Could not find face in reference image!")
+        reference_face_encodings = face_recognition.face_encodings(reference_image)
+
+        if not reference_face_encodings:
+            print("No face found in the reference image.")
+            return []
+
+        reference_face_encoding = reference_face_encodings[0]  # Use the first face found
+
+        similar_images = []
+        for filename in os.listdir(folder_path):
+            if any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
+                target_image_path = os.path.join(folder_path, filename)
+                try:
+                    target_image = face_recognition.load_image_file(target_image_path)
+                    target_face_locations = face_recognition.face_locations(target_image)
+                    target_face_encodings = face_recognition.face_encodings(target_image, target_face_locations)
+
+                    for face_encoding in target_face_encodings:
+                        face_distances = face_recognition.face_distance([reference_face_encoding], face_encoding)
+                        if face_distances[0] <= tolerance:
+                            similar_images.append(target_image_path)
+                            break  # Found a similar face, move to the next image
+
+                except Exception as e:
+                    print(f"Error processing {target_image_path}: {e}")
+
+        return similar_images
+
+    except Exception as e:
+        print(f"Error loading reference image: {e}")
+        return []
+
+def move_similar_face_images(similar_image_paths, destination_folder):
+    """
+    Moves images containing similar faces to the specified destination folder.
+
+    Args:
+        similar_image_paths (list): A list of file paths of images with similar faces.
+        destination_folder (str): The path to the folder where similar face images will be moved.
+    """
+    if not similar_image_paths:
+        print("No similar face images found to move.")
         return
 
-    # Create output folder
-    output_folder = os.path.join(os.path.dirname(reference_image_path), "MatchedFaces")
-    os.makedirs(output_folder, exist_ok=True)
-
+    os.makedirs(destination_folder, exist_ok=True)
     moved_count = 0
+    for img_path in similar_image_paths:
+        try:
+            filename = os.path.basename(img_path)
+            destination_path = os.path.join(destination_folder, filename)
+            shutil.move(img_path, destination_path)
+            print(f"Moved similar face image: {filename} to {destination_folder}")
+            moved_count += 1
+        except Exception as e:
+            print(f"Error moving {img_path}: {e}")
+    print(f"\nSuccessfully moved {moved_count} images with similar faces to {destination_folder}")
 
-    # Scan through images in target folder
-    for filename in os.listdir(target_folder):
-        if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-            image_path = os.path.join(target_folder, filename)
-            try:
-                image = face_recognition.load_image_file(image_path)
-                encodings = face_recognition.face_encodings(image)
+def main():
+    """
+    Main function to select a reference image, a folder to search,
+    find similar faces, and move the corresponding images.
+    """
+    root = Tk()
+    root.withdraw()  # Hide the main window
 
-                for face_encoding in encodings:
-                    match = face_recognition.compare_faces([reference_encoding], face_encoding, tolerance=0.5)
-                    if match[0]:
-                        shutil.copy(image_path, os.path.join(output_folder, filename))
-                        moved_count += 1
-                        break
-            except Exception as e:
-                print(f"Skipping {filename}: {e}")
-                continue
+    reference_image_path = filedialog.askopenfilename(title="Select the reference image")
+    if not reference_image_path:
+        print("No reference image selected. Exiting.")
+        return
 
-    result_label.config(text=f"✅ Moved {moved_count} matching images to '{output_folder}'")
+    folder_selected = filedialog.askdirectory(title="Select the folder to search for similar faces")
+    if not folder_selected:
+        print("No folder selected for searching. Exiting.")
+        return
 
-# GUI setup
-root = Tk()
-root.title("Face Recognition Image Sorter")
-root.geometry("500x300")
+    similar_images = find_similar_faces(reference_image_path, folder_selected)
 
-Button(root, text="Select Reference Image", command=select_reference_image).pack(pady=10)
-label_ref = Label(root, text="No reference image selected", wraplength=400)
-label_ref.pack()
+    if similar_images:
+        destination_folder = os.path.join(folder_selected, "Similar_Face_Images")
+        move_similar_face_images(similar_images, destination_folder)
+    else:
+        print("No images with similar faces found in the selected folder.")
 
-Button(root, text="Select Folder to Search", command=select_target_folder).pack(pady=10)
-label_target = Label(root, text="No target folder selected", wraplength=400)
-label_target.pack()
-
-Button(root, text="Find & Move Matching Faces", command=find_and_move_matches, bg="lightgreen").pack(pady=20)
-result_label = Label(root, text="")
-result_label.pack()
-
-root.mainloop()
+if __name__ == "__main__":
+    main()
